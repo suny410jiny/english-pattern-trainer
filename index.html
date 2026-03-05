@@ -1039,7 +1039,7 @@ function renderChapter(idx){
       allEx.forEach((ex,ei)=>{
         const isGen=ei>=p.originalExamples.length;
         exHtml+=`<div class="ex">
-          <button class="sp" onclick="event.stopPropagation();speak(\`${esc(ex.en)}\`)" title="발음 듣기">🔊</button>
+          <button class="sp" onclick="event.stopPropagation();speakNew(\`${esc(ex.en)}\`)" title="발음 듣기">🔊</button>
           <div class="en">${isGen?'<span class="gen-tag">✨ AI 생성</span> ':''}${hl(ex.en,p.english)}</div>
           ${ex.ko?`<div class="ko">${ex.ko}</div>`:''}
         </div>`;
@@ -1060,7 +1060,7 @@ function renderChapter(idx){
           <div class="sec-title">📝 예문 (${allEx.length}개)</div>
           ${exHtml||'<div style="color:var(--dim);font-size:.8rem;padding:6px">예문 없음</div>'}
           <div class="pat-actions">
-            <button onclick="speak(\`${esc(p.english)}\`)">🔊 패턴 발음</button>
+            <button onclick="speakNew(\`${esc(p.english)}\`)">🔊 패턴 발음</button>
             <button onclick="openYG(\`${esc(p.english)}\`)">🎬 YouGlish</button>
             <button onclick="speakAllEx(${ci},${pi})">🔁 예문 전체 듣기</button>
             <button onclick="repeatPattern(${ci},${pi})">🔂 패턴 3회 반복</button>
@@ -1073,7 +1073,7 @@ function renderChapter(idx){
     if(ch.vocabulary.length){
       vocabHtml=`<div style="margin-top:14px"><div class="sec-title">📖 핵심 어휘 (${ch.vocabulary.length}개)</div><div class="vocab-grid">`;
       ch.vocabulary.forEach(v=>{
-        vocabHtml+=`<div class="vocab-item" onclick="speak('${esc(v.word)}')">
+        vocabHtml+=`<div class="vocab-item" onclick="speakNew('${esc(v.word)}')">
           <div class="word">${v.word}</div>
           ${v.pos?`<div class="pos">${v.pos}</div>`:''}
           ${v.def?`<div class="def">${v.def}</div>`:''}
@@ -1107,144 +1107,107 @@ function hl(text,pattern){
 }
 function esc(s){return(s||'').replace(/`/g,"'").replace(/\\/g,'\\\\');}
 
-// ===== TTS ENGINE (Android Chrome file:// 완전 호환) =====
-let ttsVoice=null, ttsUnlocked=false, ttsAudioCtx=null;
+// ===== TTS ENGINE v4 (Android 음성수 0 + interrupted 완전 해결) =====
+let ttsVoice=null, ttsAudioCtx=null, ttsBusy=false;
 
-// ★ AudioContext 먼저 생성 (모바일 오디오 시스템 깨우기)
-function ensureAudioCtx(){
+// AudioContext (모바일 오디오 파이프라인 깨우기만 담당)
+function ensureAudio(){
   if(!ttsAudioCtx){
     try{
       ttsAudioCtx=new(window.AudioContext||window.webkitAudioContext)();
-      // 무음 버퍼 재생하여 오디오 파이프라인 활성화
-      const buf=ttsAudioCtx.createBuffer(1,1,22050);
-      const src=ttsAudioCtx.createBufferSource();
-      src.buffer=buf;
-      src.connect(ttsAudioCtx.destination);
-      src.start(0);
-      console.log('AudioContext created, state:',ttsAudioCtx.state);
-    }catch(e){console.log('AudioContext failed:',e)}
+      const b=ttsAudioCtx.createBuffer(1,1,22050);
+      const s=ttsAudioCtx.createBufferSource();
+      s.buffer=b;s.connect(ttsAudioCtx.destination);s.start(0);
+    }catch(e){}
   }
-  // suspended 상태면 resume
-  if(ttsAudioCtx&&ttsAudioCtx.state==='suspended'){
-    ttsAudioCtx.resume();
-  }
+  if(ttsAudioCtx&&ttsAudioCtx.state==='suspended')ttsAudioCtx.resume();
 }
 
-// 음성 목록 로드 (file://에서는 빈 배열일 수 있음 → voice 없이도 작동)
+// 음성 목록 (0개여도 OK)
 function loadVoices(){
   try{
-    const voices=speechSynthesis.getVoices();
-    if(voices.length){
-      ttsVoice=voices.find(v=>v.lang==='en-US'&&/google/i.test(v.name))
-        ||voices.find(v=>v.lang==='en-US')
-        ||voices.find(v=>v.lang.startsWith('en'))
-        ||voices[0]; // 최후 수단: 아무 voice라도
-      console.log('TTS voice:',ttsVoice?.name,'lang:',ttsVoice?.lang);
-    }else{
-      console.log('No voices available (file:// mode?) - will use default');
-    }
-  }catch(e){console.log('loadVoices error:',e)}
+    const v=speechSynthesis.getVoices();
+    if(v.length) ttsVoice=v.find(x=>x.lang==='en-US'&&/google/i.test(x.name))||v.find(x=>x.lang==='en-US')||v.find(x=>x.lang.startsWith('en'))||v[0];
+  }catch(e){}
 }
 if(typeof speechSynthesis!=='undefined'){
   speechSynthesis.onvoiceschanged=loadVoices;
   loadVoices();
-  // file://에서 voiceschanged가 안 올 수 있으니 타이머로 재시도
-  setTimeout(loadVoices,500);
-  setTimeout(loadVoices,2000);
+  setTimeout(loadVoices,1000);
+  setTimeout(loadVoices,3000);
 }
 
-// ★ 첫 터치 시 모든 오디오 잠금 해제
-function unlockTTS(){
-  if(ttsUnlocked)return;
-  ensureAudioCtx();
-  try{
-    // 빈 utterance로 speechSynthesis 파이프라인 활성화
-    const u=new SpeechSynthesisUtterance('.');
-    u.volume=0.01;
-    u.rate=2;
-    u.lang='en-US';
-    speechSynthesis.speak(u);
-    // 즉시 cancel하면 안 됨 - 잠깐 재생되게 둠
-    setTimeout(()=>{speechSynthesis.cancel()},150);
-  }catch(e){console.log('unlock error:',e)}
-  ttsUnlocked=true;
-  setTimeout(loadVoices,600);
-  console.log('TTS unlock attempted');
-}
-document.addEventListener('touchstart',unlockTTS,{once:true,passive:true});
-document.addEventListener('click',unlockTTS,{once:true});
-
-// ★ 핵심 speak 함수 (file:// 완전 호환)
+// ★★★ speak: cancel() 절대 안 씀. 큐에 바로 넣음 ★★★
 function speak(text){
   if(!text)return;
-  ensureAudioCtx();
-  // cancel 후 충분한 딜레이 (Android Chrome 필수)
-  try{speechSynthesis.cancel()}catch(e){}
-  setTimeout(()=>{
-    try{
-      const clean=text.replace(/<[^>]*>/g,'').replace(/\[.*?\]/g,'something');
-      const u=new SpeechSynthesisUtterance(clean);
-      u.lang='en-US';
-      u.rate=parseFloat(document.getElementById('rate').value)||0.85;
-      // ★ voice가 있으면 설정, 없으면 lang만으로 작동 (file:// 모드)
-      if(ttsVoice)u.voice=ttsVoice;
-      u.onerror=(e)=>console.log('TTS error:',e.error);
-      speechSynthesis.speak(u);
-    }catch(e){
-      console.error('speak error:',e);
-      toast('⚠️ 음성 재생 실패 - 폰 설정에서 TTS 엔진 확인');
-    }
-  },120);
+  ensureAudio();
+  loadVoices();
+  try{
+    const clean=text.replace(/<[^>]*>/g,'').replace(/\[.*?\]/g,'something');
+    const u=new SpeechSynthesisUtterance(clean);
+    u.lang='en-US';
+    u.rate=parseFloat(document.getElementById('rate').value)||0.85;
+    if(ttsVoice)u.voice=ttsVoice;
+    u.onstart=()=>{ttsBusy=true};
+    u.onend=()=>{ttsBusy=false};
+    u.onerror=(e)=>{ttsBusy=false;console.log('TTS:',e.error)};
+    speechSynthesis.speak(u);
+  }catch(e){console.error('speak:',e)}
 }
 
-// ★ 진단 테스트 버튼
-function testTTS(){
-  ensureAudioCtx();
-  const info=[];
-  info.push('프로토콜: '+location.protocol);
-  info.push('speechSynthesis: '+(typeof speechSynthesis!=='undefined'?'있음':'없음'));
-  const voices=speechSynthesis.getVoices();
-  info.push('음성 수: '+voices.length);
-  if(ttsVoice)info.push('선택 음성: '+ttsVoice.name);
-  info.push('AudioContext: '+(ttsAudioCtx?ttsAudioCtx.state:'없음'));
-
-  // 실제 발화 테스트
-  try{
+// 이전 발화 중단하고 새로 재생 (버튼 연타 시)
+function speakNew(text){
+  if(!text)return;
+  ensureAudio();
+  loadVoices();
+  // 재생 중이면 중단 후 딜레이
+  if(speechSynthesis.speaking||speechSynthesis.pending){
     speechSynthesis.cancel();
-    setTimeout(()=>{
-      const u=new SpeechSynthesisUtterance('Hello, this is a test.');
-      u.lang='en-US';
-      u.rate=0.9;
-      if(ttsVoice)u.voice=ttsVoice;
-      u.onstart=()=>toast('✅ TTS 작동 중! 소리가 들리나요?');
-      u.onerror=(e)=>{
-        toast('❌ TTS 오류: '+e.error);
-        info.push('오류: '+e.error);
-        alert('TTS 진단 결과:\n'+info.join('\n')+'\n\n해결법:\n1. 폰 미디어 볼륨 올리기\n2. 설정→접근성→텍스트 음성변환→Google TTS 선택\n3. Google TTS 앱 업데이트');
-      };
-      u.onend=()=>console.log('Test speech completed');
-      speechSynthesis.speak(u);
-      // 2초 뒤에도 시작 안 했으면 실패로 간주
-      setTimeout(()=>{
-        if(!speechSynthesis.speaking&&!speechSynthesis.pending){
-          alert('TTS 진단 결과:\n'+info.join('\n')+'\n\n⚠️ 음성이 재생되지 않았습니다.\n\n해결법:\n1. 폰 미디어 볼륨을 올려주세요\n2. 설정 → 접근성 → 텍스트 음성 변환\n   → Google TTS 엔진 선택\n3. Play Store에서 "Google 텍스트 음성 변환" 앱 업데이트\n4. 폰 재부팅 후 다시 시도');
-        }
-      },2500);
-    },150);
-  }catch(e){
-    alert('TTS를 사용할 수 없습니다.\n'+info.join('\n')+'\n오류: '+e.message);
+    setTimeout(()=>speak(text),300);
+  }else{
+    speak(text);
   }
+}
+
+// 진단 테스트 (cancel 절대 안 씀)
+function testTTS(){
+  ensureAudio();
+  loadVoices();
+  const v=speechSynthesis.getVoices();
+  const info=['프로토콜: '+location.protocol,'음성 수: '+v.length,'선택음성: '+(ttsVoice?ttsVoice.name:'없음(기본)'),'AudioCtx: '+(ttsAudioCtx?ttsAudioCtx.state:'없음')];
+
+  const u=new SpeechSynthesisUtterance('Hello. This is a test. Can you hear me?');
+  u.lang='en-US';
+  u.rate=0.85;
+  if(ttsVoice)u.voice=ttsVoice;
+  u.onstart=()=>toast('✅ 재생 중! 소리 들리나요?');
+  u.onend=()=>toast('✅ 테스트 완료!');
+  u.onerror=(e)=>{
+    info.push('오류: '+e.error);
+    alert('TTS 진단:\n'+info.join('\n')+'\n\n해결:\n1. 미디어 볼륨 올리기\n2. 설정→일반관리→언어→텍스트 음성 변환→Google TTS\n3. Play Store→Speech Services by Google 업데이트\n4. 폰 재부팅');
+  };
+  speechSynthesis.speak(u);
+
+  setTimeout(()=>{
+    if(!speechSynthesis.speaking&&!ttsBusy){
+      alert('TTS 진단:\n'+info.join('\n')+'\n\n⚠️ 소리 안 남\n\n해결:\n1. 볼륨 버튼→미디어 볼륨 올리기\n2. 설정→일반관리→언어→텍스트 음성 변환\n   →Google TTS 선택 후 재생 테스트\n3. 폰 재부팅');
+    }
+  },3000);
 }
 
 function speakAllEx(ci,pi){
   const p=chapters[ci]?.patterns[pi];if(!p)return;
   const all=[...p.originalExamples,...p.generatedExamples];
+  const queue=[p.english,...all.map(e=>e.en)];
   let i=0;
-  speak(p.english);
-  const iv=setInterval(()=>{
-    if(i>=all.length){clearInterval(iv);toast('🔁 전체 재생 완료');return}
-    if(!speechSynthesis.speaking&&!speechSynthesis.pending){speak(all[i].en);i++}
-  },1500);
+  function next(){
+    if(i>=queue.length){toast('🔁 전체 재생 완료');return}
+    speak(queue[i]);i++;
+    const check=setInterval(()=>{
+      if(!speechSynthesis.speaking&&!speechSynthesis.pending){clearInterval(check);setTimeout(next,300)}
+    },200);
+  }
+  next();
 }
 
 async function repeatPattern(ci,pi){
@@ -1252,13 +1215,11 @@ async function repeatPattern(ci,pi){
   for(let i=0;i<3;i++){
     speak(p.english);
     await new Promise(r=>{
-      setTimeout(()=>{
-        const check=setInterval(()=>{
-          if(!speechSynthesis.speaking&&!speechSynthesis.pending){clearInterval(check);r()}
-        },300);
+      const check=setInterval(()=>{
+        if(!speechSynthesis.speaking&&!speechSynthesis.pending){clearInterval(check);r()}
       },200);
     });
-    await delay(800);
+    await delay(600);
   }
   toast('🔂 3회 반복 완료');
 }
@@ -1405,26 +1366,23 @@ async function runPlayer(){
 function speakAndWait(text){
   return new Promise(resolve=>{
     if(!text||playerAbort){resolve();return}
-    ensureAudioCtx();
-    try{speechSynthesis.cancel()}catch(e){}
-    // ★ Android Chrome: cancel 후 딜레이 필수
-    setTimeout(()=>{
-      if(playerAbort){resolve();return}
-      try{
-        const clean=text.replace(/<[^>]*>/g,'').replace(/\[.*?\]/g,'something');
-        const u=new SpeechSynthesisUtterance(clean);
-        u.lang='en-US';
-        u.rate=parseFloat(document.getElementById('rate').value)||0.85;
-        if(ttsVoice)u.voice=ttsVoice;
-        let resolved=false;
-        const done=()=>{if(!resolved){resolved=true;resolve()}};
-        u.onend=done;
-        u.onerror=(e)=>{console.log('speakAndWait error:',e.error);done()};
-        speechSynthesis.speak(u);
-        // Safety timeout
-        setTimeout(()=>{if(!speechSynthesis.speaking&&!speechSynthesis.pending)done()},15000);
-      }catch(e){console.error('speakAndWait exception:',e);resolve()}
-    },120);
+    ensureAudio();
+    loadVoices();
+    try{
+      const clean=text.replace(/<[^>]*>/g,'').replace(/\[.*?\]/g,'something');
+      const u=new SpeechSynthesisUtterance(clean);
+      u.lang='en-US';
+      u.rate=parseFloat(document.getElementById('rate').value)||0.85;
+      if(ttsVoice)u.voice=ttsVoice;
+      let done=false;
+      const finish=()=>{if(!done){done=true;ttsBusy=false;resolve()}};
+      u.onstart=()=>{ttsBusy=true};
+      u.onend=finish;
+      u.onerror=(e)=>{console.log('player TTS:',e.error);finish()};
+      speechSynthesis.speak(u);
+      // Safety timeout
+      setTimeout(()=>{if(!speechSynthesis.speaking)finish()},15000);
+    }catch(e){resolve()}
   });
 }
 
@@ -1460,7 +1418,7 @@ function showRv(){
   document.getElementById('rvPat').innerHTML=p.english.replace(/\[([^\]]+)\]/g,'<span style="color:var(--yellow)">[$1]</span>');
   document.getElementById('rvExp').textContent=p.explanation||p.chapter||'';
   const all=[...p.originalExamples,...p.generatedExamples];
-  document.getElementById('rvExs').innerHTML=all.map(e=>`<div class="ex-r"><div class="en">${e.en} <span style="cursor:pointer" onclick="event.stopPropagation();speak(\`${esc(e.en)}\`)">🔊</span></div>${e.ko?`<div class="ko">${e.ko}</div>`:''}</div>`).join('')||'<div style="color:var(--dim)">예문 없음</div>';
+  document.getElementById('rvExs').innerHTML=all.map(e=>`<div class="ex-r"><div class="en">${e.en} <span style="cursor:pointer" onclick="event.stopPropagation();speakNew(\`${esc(e.en)}\`)">🔊</span></div>${e.ko?`<div class="ko">${e.ko}</div>`:''}</div>`).join('')||'<div style="color:var(--dim)">예문 없음</div>';
   document.getElementById('rvCnt').textContent=`${rvIdx+1} / ${allPatternsFlat.length}`;
   setTimeout(()=>speak(p.english),400);
 }
