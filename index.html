@@ -286,7 +286,7 @@ body{font-family:-apple-system,'Segoe UI',sans-serif;background:var(--bg);color:
 <body>
 <div class="app">
   <div class="header">
-    <h1>English Pattern Trainer v4</h1>
+    <h1>English Pattern Trainer v3</h1>
     <p>PDF 교재 → 챕터별 패턴 추출 → 어휘 분석 → 예문 생성 → 발음 반복 학습</p>
   </div>
 
@@ -1227,8 +1227,8 @@ function speak(text){
 
 function speakNew(text){speak(text);}
 
-// ★ speakAndWait - Promise-based for sequential playback (반복듣기용)
-// setTimeout 없이 직접 play() 호출 (모바일 제스처 컨텍스트 유지)
+// ★ speakAndWait - speak()와 동일한 패턴 + Promise (순차 재생용)
+// speak()가 폰에서 작동하므로 동일한 구조 유지, pause() 없음
 function speakAndWait(text){
   return new Promise(resolve=>{
     if(!text||playerAbort){resolve();return}
@@ -1251,13 +1251,14 @@ function speakAndWait(text){
       u.onerror=finish;
       speechSynthesis.speak(u);
       setTimeout(finish,20000);
-    }else if(ttsMethod==='audio'||ttsMethod==='auto'){
-      // audio/auto: 직접 play() (setTimeout 없음!)
-      ttsAudio.pause();
+    }else{
+      // audio/auto/iframe 모두 동일: speak()와 같은 패턴
+      // ★ pause() 없음 - speak()와 동일하게 src만 교체
       ttsAudio.src=gTtsUrl(clean);
       ttsAudio.playbackRate=rate;
       ttsAudio.onended=()=>{ttsMethod='audio';finish()};
       ttsAudio.onerror=()=>{
+        // audio 실패 → iframe 폴백
         ttsMethod='iframe';
         ttsFrame.src=gTtsUrl(clean);
         setTimeout(finish,estimateDuration(clean));
@@ -1269,10 +1270,6 @@ function speakAndWait(text){
         setTimeout(finish,estimateDuration(clean));
       });
       setTimeout(finish,20000);
-    }else{
-      // iframe
-      ttsFrame.src=gTtsUrl(clean);
-      setTimeout(finish,estimateDuration(clean));
     }
   });
 }
@@ -1479,22 +1476,7 @@ async function runPlayer(){
   toast(`🎉 ${playerRound}회 반복 재생 완료!`);
 }
 
-function speakAndWait(text){
-  return new Promise(resolve=>{
-    if(!text||playerAbort){resolve();return}
-    const clean=text.replace(/<[^>]*>/g,'').replace(/\[.*?\]/g,'something').trim();
-    if(!clean){resolve();return}
-    ttsBusy=true;
-    ttsAudio.src=gTtsUrl(clean);
-    ttsAudio.playbackRate=parseFloat(document.getElementById('rate').value)||0.85;
-    let done=false;
-    const finish=()=>{if(!done){done=true;ttsBusy=false;resolve()}};
-    ttsAudio.onended=finish;
-    ttsAudio.onerror=finish;
-    ttsAudio.play().catch(()=>finish());
-    setTimeout(finish,20000);
-  });
-}
+// (speakAndWait는 위에서 정의됨 - 중복 제거)
 
 function stopPlayer(){
   playerAbort=true;
