@@ -1543,17 +1543,18 @@ function startReview(){
 function closeRv(){document.getElementById('overlay').classList.remove('on')}
 function rvNext(){if(rvIdx<allPatternsFlat.length-1){rvIdx++;showRv()}else toast('마지막!')}
 function rvPrev(){if(rvIdx>0){rvIdx--;showRv()}}
+let _rvExTexts=[];  // 현재 리뷰 카드 예문 목록
 function showRv(){
   const p=allPatternsFlat[rvIdx];
   document.getElementById('rvCard').classList.remove('flip');
   document.getElementById('rvPat').innerHTML=p.english.replace(/\[([^\]]+)\]/g,'<span style="color:var(--yellow)">[$1]</span>');
   document.getElementById('rvExp').textContent=p.explanation||p.chapter||'';
-  const all=[...p.originalExamples,...p.generatedExamples];
+  const all=[...(p.originalExamples||[]),...(p.generatedExamples||[])];
+  _rvExTexts=all.map(e=>e.en);
   const exHtml=all.map(e=>`<div class="ex-r"><div class="en">${e.en} <span style="cursor:pointer" onclick="event.stopPropagation();speakNew(\`${esc(e.en)}\`)">🔊</span></div>${e.ko?`<div class="ko">${e.ko}</div>`:''}</div>`).join('');
-  const listenAllBtn=all.length>0?`<div style="text-align:center;margin:8px 0"><button onclick="event.stopPropagation();speakExList([${all.map(e=>'\`'+esc(e.en)+'\`').join(',')}])" style="background:var(--blue);color:#fff;border:none;padding:6px 14px;border-radius:8px;font-size:13px;cursor:pointer">🔊 예문 전체 듣기 (${all.length}개)</button></div>`:'';
+  const listenAllBtn=all.length>0?`<div style="text-align:center;margin:8px 0"><button onclick="event.stopPropagation();speakExList(_rvExTexts)" style="background:var(--blue);color:#fff;border:none;padding:6px 14px;border-radius:8px;font-size:13px;cursor:pointer">🔊 예문 전체 듣기 (${all.length}개)</button></div>`:'';
   document.getElementById('rvExs').innerHTML=(exHtml||'<div style="color:var(--dim)">예문 없음</div>')+listenAllBtn;
   document.getElementById('rvCnt').textContent=`${rvIdx+1} / ${allPatternsFlat.length}`;
-  // 카드 전환 시 패턴 자동 읽기 (직접 speak 호출, setTimeout 제거)
   speak(p.english);
 }
 
