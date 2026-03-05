@@ -1147,26 +1147,28 @@ function estimateDuration(text){
 }
 
 function stopAllAudio(){
-  ttsAudio.pause();ttsAudio.removeAttribute('src');ttsAudio.load();
+  ttsAudio.pause();
   ttsFrame.src='about:blank';
   if(typeof speechSynthesis!=='undefined')speechSynthesis.cancel();
   ttsBusy=false;
 }
 
-// ★ Core speak function
+// ★ Core speak function (cancel 제거 - 쉰 목소리 방지)
 function speak(text){
   if(!text)return;
   const clean=text.replace(/<[^>]*>/g,'').replace(/\[.*?\]/g,'something').trim();
   if(!clean)return;
   ttsBusy=true;
 
-  if(ttsMethod==='speech'&&ttsVoices.length>0){
-    speechSynthesis.cancel();
+  if(ttsMethod==='speech'){
+    // cancel 없이 바로 speak (cancel이 음성을 깨뜨림)
     const u=new SpeechSynthesisUtterance(clean);
     u.lang='en-US';
     u.rate=parseFloat(document.getElementById('rate').value)||0.85;
-    const ev=ttsVoices.find(v=>v.lang.startsWith('en'));
-    if(ev)u.voice=ev;
+    if(ttsVoices.length>0){
+      const ev=ttsVoices.find(v=>v.lang==='en-US')||ttsVoices.find(v=>v.lang.startsWith('en'));
+      if(ev)u.voice=ev;
+    }
     u.onend=()=>{ttsBusy=false};
     u.onerror=()=>{ttsBusy=false};
     speechSynthesis.speak(u);
@@ -1177,7 +1179,7 @@ function speak(text){
     // Try audio element first (with no-referrer), iframe as fallback
     ttsAudio.src=gTtsUrl(clean);
     ttsAudio.playbackRate=parseFloat(document.getElementById('rate').value)||0.85;
-    ttsAudio.onended=()=>{ttsBusy=false};
+    ttsAudio.onended=()=>{ttsMethod='audio';ttsBusy=false};
     ttsAudio.onerror=()=>{
       console.log('TTS: Audio failed, switching to iframe');
       ttsMethod='iframe';
@@ -1202,7 +1204,7 @@ function speak(text){
 
 function speakNew(text){speak(text);}
 
-// ★ speakAndWait - Promise-based for sequential playback
+// ★ speakAndWait - Promise-based for sequential playback (반복듣기용)
 function speakAndWait(text){
   return new Promise(resolve=>{
     if(!text||playerAbort){resolve();return}
@@ -1212,30 +1214,49 @@ function speakAndWait(text){
     let done=false;
     const finish=()=>{if(!done){done=true;ttsBusy=false;resolve()}};
 
-    if(ttsMethod==='speech'&&ttsVoices.length>0){
+    if(ttsMethod==='speech'){
+      // 순차 재생: cancel로 큐 비우고 짧은 딜레이 후 speak (쉰 목소리 방지)
       speechSynthesis.cancel();
-      const u=new SpeechSynthesisUtterance(clean);
-      u.lang='en-US';
-      u.rate=parseFloat(document.getElementById('rate').value)||0.85;
-      const ev=ttsVoices.find(v=>v.lang.startsWith('en'));
-      if(ev)u.voice=ev;
-      u.onend=finish;
-      u.onerror=finish;
-      speechSynthesis.speak(u);
-      setTimeout(finish,20000);
-    }else if(ttsMethod==='iframe'){
-      ttsFrame.src=gTtsUrl(clean);
-      setTimeout(finish,estimateDuration(clean));
-    }else{
+      setTimeout(()=>{
+        const u=new SpeechSynthesisUtterance(clean);
+        u.lang='en-US';
+        u.rate=parseFloat(document.getElementById('rate').value)||0.85;
+        if(ttsVoices.length>0){
+          const ev=ttsVoices.find(v=>v.lang==='en-US')||ttsVoices.find(v=>v.lang.startsWith('en'));
+          if(ev)u.voice=ev;
+        }
+        u.onend=finish;
+        u.onerror=finish;
+        speechSynthesis.speak(u);
+        setTimeout(finish,20000);
+      },80);
+    }else if(ttsMethod==='audio'){
+      ttsAudio.pause();
       ttsAudio.src=gTtsUrl(clean);
       ttsAudio.playbackRate=parseFloat(document.getElementById('rate').value)||0.85;
       ttsAudio.onended=finish;
+      ttsAudio.onerror=finish;
+      ttsAudio.play().catch(finish);
+      setTimeout(finish,20000);
+    }else if(ttsMethod==='iframe'){
+      ttsFrame.src='about:blank';
+      setTimeout(()=>{
+        ttsFrame.src=gTtsUrl(clean);
+        setTimeout(finish,estimateDuration(clean));
+      },100);
+    }else{
+      // auto: try audio, fallback to iframe
+      ttsAudio.pause();
+      ttsAudio.src=gTtsUrl(clean);
+      ttsAudio.playbackRate=parseFloat(document.getElementById('rate').value)||0.85;
+      ttsAudio.onended=()=>{ttsMethod='audio';finish()};
       ttsAudio.onerror=()=>{
         ttsMethod='iframe';
         ttsFrame.src=gTtsUrl(clean);
         setTimeout(finish,estimateDuration(clean));
       };
-      ttsAudio.play().catch(()=>{
+      const p=ttsAudio.play();
+      if(p)p.catch(()=>{
         ttsMethod='iframe';
         ttsFrame.src=gTtsUrl(clean);
         setTimeout(finish,estimateDuration(clean));
@@ -1251,12 +1272,13 @@ function testTTS(){
   const testClean='Hello. This is a test.';
   ttsBusy=true;
 
-  if(ttsMethod==='speech'&&ttsVoices.length>0){
-    speechSynthesis.cancel();
+  if(ttsMethod==='speech'){
     const u=new SpeechSynthesisUtterance(testClean);
     u.lang='en-US';u.rate=0.85;
-    const ev=ttsVoices.find(v=>v.lang.startsWith('en'));
-    if(ev)u.voice=ev;
+    if(ttsVoices.length>0){
+      const ev=ttsVoices.find(v=>v.lang==='en-US')||ttsVoices.find(v=>v.lang.startsWith('en'));
+      if(ev)u.voice=ev;
+    }
     u.onend=()=>{ttsBusy=false;toast('✅ Speech API 성공!')};
     u.onerror=()=>{ttsBusy=false;toast('❌ Speech API 실패 → Audio 시도');tryAudioTest()};
     speechSynthesis.speak(u);
