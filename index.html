@@ -286,7 +286,7 @@ body{font-family:-apple-system,'Segoe UI',sans-serif;background:var(--bg);color:
 <body>
 <div class="app">
   <div class="header">
-    <h1>English Pattern Trainer v5</h1>
+    <h1>English Pattern Trainer v3</h1>
     <p>PDF 교재 → 챕터별 패턴 추출 → 어휘 분석 → 예문 생성 → 발음 반복 학습</p>
   </div>
 
@@ -1311,30 +1311,69 @@ function testTTS(){
   }
 }
 
-// 예문 전체 듣기
+// 예문 전체 듣기 (async/await 제거 → onended 콜백 체인)
 function speakAllEx(ci,pi){
   const p=chapters[ci]?.patterns[pi];if(!p)return;
-  const all=[...p.originalExamples,...p.generatedExamples];
+  const all=[...(p.originalExamples||[]),...(p.generatedExamples||[])];
   const queue=[p.english,...all.map(e=>e.en)];
   let i=0;
-  async function next(){
+  toast('🔁 전체 듣기 시작...');
+  function next(){
     if(i>=queue.length){toast('🔁 전체 재생 완료');return}
-    await speakAndWait(queue[i]);
+    const clean=(queue[i]||'').replace(/<[^>]*>/g,'').replace(/\[.*?\]/g,'something').trim();
     i++;
-    await delay(400);
-    next();
+    if(!clean){next();return}
+    ttsBusy=true;
+    ttsAudio.src=gTtsUrl(clean);
+    ttsAudio.playbackRate=parseFloat(document.getElementById('rate').value)||0.85;
+    ttsAudio.onended=()=>{ttsBusy=false;ttsMethod='audio';setTimeout(next,400)};
+    ttsAudio.onerror=()=>{ttsBusy=false;setTimeout(next,200)};
+    const pp=ttsAudio.play();
+    if(pp)pp.catch(()=>{ttsBusy=false;setTimeout(next,200)});
   }
   next();
 }
 
-// 패턴 3회 반복
-async function repeatPattern(ci,pi){
+// 패턴 3회 반복 (async/await 제거 → onended 콜백 체인)
+function repeatPattern(ci,pi){
   const p=chapters[ci]?.patterns[pi];if(!p)return;
-  for(let k=0;k<3;k++){
-    await speakAndWait(p.english);
-    await delay(600);
+  const clean=p.english.replace(/<[^>]*>/g,'').replace(/\[.*?\]/g,'something').trim();
+  if(!clean)return;
+  let k=0;
+  toast('🔂 3회 반복 시작...');
+  function next(){
+    if(k>=3){toast('🔂 3회 반복 완료');return}
+    k++;
+    ttsBusy=true;
+    ttsAudio.src=gTtsUrl(clean);
+    ttsAudio.playbackRate=parseFloat(document.getElementById('rate').value)||0.85;
+    ttsAudio.onended=()=>{ttsBusy=false;ttsMethod='audio';setTimeout(next,600)};
+    ttsAudio.onerror=()=>{ttsBusy=false;setTimeout(next,200)};
+    const pp=ttsAudio.play();
+    if(pp)pp.catch(()=>{ttsBusy=false;setTimeout(next,200)});
   }
-  toast('🔂 3회 반복 완료');
+  next();
+}
+
+// 예문 리스트 전체 듣기 (리뷰 카드용)
+function speakExList(texts){
+  if(!texts||!texts.length)return;
+  let i=0;
+  toast('🔊 예문 전체 듣기...');
+  function next(){
+    if(i>=texts.length){toast('🔁 전체 재생 완료');return}
+    const clean=(texts[i]||'').replace(/<[^>]*>/g,'').replace(/\[.*?\]/g,'something').trim();
+    i++;
+    if(!clean){next();return}
+    ttsBusy=true;
+    ttsAudio.src=gTtsUrl(clean);
+    ttsAudio.playbackRate=parseFloat(document.getElementById('rate').value)||0.85;
+    ttsAudio.onended=()=>{ttsBusy=false;ttsMethod='audio';setTimeout(next,400)};
+    ttsAudio.onerror=()=>{ttsBusy=false;setTimeout(next,200)};
+    const pp=ttsAudio.play();
+    if(pp)pp.catch(()=>{ttsBusy=false;setTimeout(next,200)});
+  }
+  next();
 }
 
 function openYG(q){
@@ -1510,9 +1549,12 @@ function showRv(){
   document.getElementById('rvPat').innerHTML=p.english.replace(/\[([^\]]+)\]/g,'<span style="color:var(--yellow)">[$1]</span>');
   document.getElementById('rvExp').textContent=p.explanation||p.chapter||'';
   const all=[...p.originalExamples,...p.generatedExamples];
-  document.getElementById('rvExs').innerHTML=all.map(e=>`<div class="ex-r"><div class="en">${e.en} <span style="cursor:pointer" onclick="event.stopPropagation();speakNew(\`${esc(e.en)}\`)">🔊</span></div>${e.ko?`<div class="ko">${e.ko}</div>`:''}</div>`).join('')||'<div style="color:var(--dim)">예문 없음</div>';
+  const exHtml=all.map(e=>`<div class="ex-r"><div class="en">${e.en} <span style="cursor:pointer" onclick="event.stopPropagation();speakNew(\`${esc(e.en)}\`)">🔊</span></div>${e.ko?`<div class="ko">${e.ko}</div>`:''}</div>`).join('');
+  const listenAllBtn=all.length>0?`<div style="text-align:center;margin:8px 0"><button onclick="event.stopPropagation();speakExList([${all.map(e=>'\`'+esc(e.en)+'\`').join(',')}])" style="background:var(--blue);color:#fff;border:none;padding:6px 14px;border-radius:8px;font-size:13px;cursor:pointer">🔊 예문 전체 듣기 (${all.length}개)</button></div>`:'';
+  document.getElementById('rvExs').innerHTML=(exHtml||'<div style="color:var(--dim)">예문 없음</div>')+listenAllBtn;
   document.getElementById('rvCnt').textContent=`${rvIdx+1} / ${allPatternsFlat.length}`;
-  setTimeout(()=>speak(p.english),400);
+  // 카드 전환 시 패턴 자동 읽기 (직접 speak 호출, setTimeout 제거)
+  speak(p.english);
 }
 
 // ===== EXPORT =====
