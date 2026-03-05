@@ -1128,6 +1128,29 @@ ttsAudio.setAttribute('referrerpolicy','no-referrer');
 ttsAudio.crossOrigin=null;
 document.body.appendChild(ttsAudio);
 
+// ★★★ 모바일 오디오 잠금해제 (첫 터치/클릭 시 무음 재생) ★★★
+let _audioUnlocked=false;
+function _unlockAudio(){
+  if(_audioUnlocked)return;
+  // 무음 WAV 재생으로 Audio 요소 잠금해제
+  const silence='data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
+  ttsAudio.src=silence;
+  const p=ttsAudio.play();
+  if(p)p.then(()=>{
+    ttsAudio.pause();
+    ttsAudio.src='';
+    _audioUnlocked=true;
+    console.log('TTS: Audio unlocked by user gesture');
+  }).catch(()=>{});
+  // AudioContext도 잠금해제
+  try{
+    const ctx=new(window.AudioContext||window.webkitAudioContext)();
+    ctx.resume().then(()=>ctx.close()).catch(()=>{});
+  }catch(e){}
+}
+document.addEventListener('touchstart',_unlockAudio,{passive:true});
+document.addEventListener('click',_unlockAudio);
+
 // --- Strategy 3: Hidden iframe fallback ---
 const ttsFrame=document.createElement('iframe');
 ttsFrame.style.cssText='position:fixed;bottom:-200px;left:-200px;width:1px;height:1px;border:none;opacity:0;pointer-events:none;';
@@ -1205,6 +1228,7 @@ function speak(text){
 function speakNew(text){speak(text);}
 
 // ★ speakAndWait - Promise-based for sequential playback (반복듣기용)
+// setTimeout 없이 직접 play() 호출 (모바일 제스처 컨텍스트 유지)
 function speakAndWait(text){
   return new Promise(resolve=>{
     if(!text||playerAbort){resolve();return}
@@ -1213,42 +1237,25 @@ function speakAndWait(text){
     ttsBusy=true;
     let done=false;
     const finish=()=>{if(!done){done=true;ttsBusy=false;resolve()}};
+    const rate=parseFloat(document.getElementById('rate').value)||0.85;
 
     if(ttsMethod==='speech'){
-      // 순차 재생: cancel로 큐 비우고 짧은 딜레이 후 speak (쉰 목소리 방지)
-      speechSynthesis.cancel();
-      setTimeout(()=>{
-        const u=new SpeechSynthesisUtterance(clean);
-        u.lang='en-US';
-        u.rate=parseFloat(document.getElementById('rate').value)||0.85;
-        if(ttsVoices.length>0){
-          const ev=ttsVoices.find(v=>v.lang==='en-US')||ttsVoices.find(v=>v.lang.startsWith('en'));
-          if(ev)u.voice=ev;
-        }
-        u.onend=finish;
-        u.onerror=finish;
-        speechSynthesis.speak(u);
-        setTimeout(finish,20000);
-      },80);
-    }else if(ttsMethod==='audio'){
-      ttsAudio.pause();
-      ttsAudio.src=gTtsUrl(clean);
-      ttsAudio.playbackRate=parseFloat(document.getElementById('rate').value)||0.85;
-      ttsAudio.onended=finish;
-      ttsAudio.onerror=finish;
-      ttsAudio.play().catch(finish);
+      const u=new SpeechSynthesisUtterance(clean);
+      u.lang='en-US';
+      u.rate=rate;
+      if(ttsVoices.length>0){
+        const ev=ttsVoices.find(v=>v.lang==='en-US')||ttsVoices.find(v=>v.lang.startsWith('en'));
+        if(ev)u.voice=ev;
+      }
+      u.onend=finish;
+      u.onerror=finish;
+      speechSynthesis.speak(u);
       setTimeout(finish,20000);
-    }else if(ttsMethod==='iframe'){
-      ttsFrame.src='about:blank';
-      setTimeout(()=>{
-        ttsFrame.src=gTtsUrl(clean);
-        setTimeout(finish,estimateDuration(clean));
-      },100);
-    }else{
-      // auto: try audio, fallback to iframe
+    }else if(ttsMethod==='audio'||ttsMethod==='auto'){
+      // audio/auto: 직접 play() (setTimeout 없음!)
       ttsAudio.pause();
       ttsAudio.src=gTtsUrl(clean);
-      ttsAudio.playbackRate=parseFloat(document.getElementById('rate').value)||0.85;
+      ttsAudio.playbackRate=rate;
       ttsAudio.onended=()=>{ttsMethod='audio';finish()};
       ttsAudio.onerror=()=>{
         ttsMethod='iframe';
@@ -1262,6 +1269,10 @@ function speakAndWait(text){
         setTimeout(finish,estimateDuration(clean));
       });
       setTimeout(finish,20000);
+    }else{
+      // iframe
+      ttsFrame.src=gTtsUrl(clean);
+      setTimeout(finish,estimateDuration(clean));
     }
   });
 }
